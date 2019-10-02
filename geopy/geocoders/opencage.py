@@ -113,11 +113,17 @@ class OpenCage(Geocoder):
                 This format is now deprecated in favor of a list/tuple
                 of a pair of geopy Points and will be removed in geopy 2.0.
 
-        :param str country: Provides the geocoder with a hint to the
-            country that the query resides in. This value will help the
-            geocoder but will not restrict the possible results to the
-            supplied country. The country code is a 3 character code as
-            defined by the ISO 3166-1 Alpha 3 standard.
+        :param country: Restricts the results to the specified
+            country or countries. The country code is a 2 character code as
+            defined by the ISO 3166-1 Alpha 2 standard (e.g. ``fr``).
+            Might be a Python list of strings.
+
+            .. versionchanged:: 1.19.0
+                This parameter didn't seem to be respected previously.
+                Also, previously only a single string could be specified.
+                Now a Python list of individual countries is supported.
+
+        :type country: str or list
 
         :param bool exactly_one: Return one result or a list of results, if
             available.
@@ -140,10 +146,11 @@ class OpenCage(Geocoder):
                 warnings.warn(
                     'OpenCage `bounds` format of '
                     '`"longitude,latitude,longitude,latitude"` is now '
-                    'deprecated and will be not supported in geopy 2.0. '
+                    'deprecated and will not be supported in geopy 2.0. '
                     'Use `[Point(latitude, longitude), Point(latitude, longitude)]` '
                     'instead.',
-                    UserWarning
+                    DeprecationWarning,
+                    stacklevel=2
                 )
                 lon1, lat1, lon2, lat2 = bounds.split(',')
                 bounds = [[lat1, lon1], [lat2, lon2]]
@@ -151,8 +158,13 @@ class OpenCage(Geocoder):
                 bounds, "%(lon1)s,%(lat1)s,%(lon2)s,%(lat2)s")
         if language:
             params['language'] = language
+
+        if not country:
+            country = []
+        if isinstance(country, string_compare):
+            country = [country]
         if country:
-            params['country'] = country
+            params['countrycode'] = ",".join(country)
 
         url = "?".join((self.api, urlencode(params)))
 
@@ -201,7 +213,7 @@ class OpenCage(Geocoder):
                           'argument will become True in geopy 2.0. '
                           'Specify `exactly_one=False` as the argument '
                           'explicitly to get rid of this warning.' % type(self).__name__,
-                          DeprecationWarning)
+                          DeprecationWarning, stacklevel=2)
             exactly_one = False
 
         params = {

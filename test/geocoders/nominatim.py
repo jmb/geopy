@@ -1,5 +1,6 @@
 import warnings
 from abc import ABCMeta, abstractmethod
+
 from mock import patch
 from six import with_metaclass
 
@@ -78,28 +79,6 @@ class BaseNominatimTestCase(with_metaclass(ABCMeta, object)):
         )
         self.assertIn("New York", location.address)
 
-    def test_country_bias(self):
-        self.geocoder = self.make_geocoder(country_bias='RU')
-        self.geocode_run(
-            {"query": "moscow"},
-            {"latitude": 55.7507178, "longitude": 37.6176606,
-             "delta": 0.3},
-        )
-
-        self.geocoder = self.make_geocoder(country_bias='US')
-        location = self.geocode_run(
-            {"query": "moscow"},
-            # There are two possible results:
-            # Moscow Idaho: 46.7323875,-117.0001651
-            # Moscow Penn: 41.3367497,-75.5185191
-            {},
-        )
-        # We don't care which Moscow is returned, unless it's
-        # the Russian one. We can sort this out by asserting
-        # the longitudes. The Russian Moscow has positive longitudes.
-        self.assertLess(-119, location.longitude)
-        self.assertLess(location.longitude, -70)
-
     def test_structured_query(self):
         self.geocode_run(
             {"query": {"country": "us", "city": "moscow",
@@ -108,10 +87,9 @@ class BaseNominatimTestCase(with_metaclass(ABCMeta, object)):
         )
 
     def test_city_district_with_dict_query(self):
-        self.geocoder = self.make_geocoder(country_bias='DE')
         query = {'postalcode': 10117}
         result = self.geocode_run(
-            {"query": query, "addressdetails": True},
+            {"query": query, "addressdetails": True, "country_codes": "DE"},
             {},
         )
         try:
@@ -218,7 +196,7 @@ class BaseNominatimTestCase(with_metaclass(ABCMeta, object)):
         )
         self.assertNotIn('address', res.raw)
 
-    def test_view_box(self):
+    def test_viewbox(self):
         res = self.geocode_run(
             {"query": "Maple Street"},
             {},
@@ -226,16 +204,17 @@ class BaseNominatimTestCase(with_metaclass(ABCMeta, object)):
         self.assertFalse(50 <= res.latitude <= 52)
         self.assertFalse(-0.15 <= res.longitude <= -0.11)
 
-        for view_box in [((52, -0.11), (50, -0.15)),
-                         [Point(52, -0.11), Point(50, -0.15)],
-                         (("52", "-0.11"), ("50", "-0.15"))]:
-            self.geocoder = self.make_geocoder(view_box=view_box)
+        for viewbox in [
+            ((52, -0.11), (50, -0.15)),
+            [Point(52, -0.11), Point(50, -0.15)],
+            (("52", "-0.11"), ("50", "-0.15"))
+        ]:
             self.geocode_run(
-                {"query": "Maple Street"},
+                {"query": "Maple Street", "viewbox": viewbox},
                 {"latitude": 51.5223513, "longitude": -0.1382104}
             )
 
-    def test_deprecated_view_box(self):
+    def test_deprecated_viewbox(self):
         res = self.geocode_run(
             {"query": "Maple Street"},
             {},
@@ -243,13 +222,14 @@ class BaseNominatimTestCase(with_metaclass(ABCMeta, object)):
         self.assertFalse(50 <= res.latitude <= 52)
         self.assertFalse(-0.15 <= res.longitude <= -0.11)
 
-        for view_box in [(-0.11, 52, -0.15, 50),
-                         ("-0.11", "52", "-0.15", "50")]:
+        for viewbox in [
+            (-0.11, 52, -0.15, 50),
+            ("-0.11", "52", "-0.15", "50")
+        ]:
             with warnings.catch_warnings(record=True) as w:
                 warnings.simplefilter('always')
-                self.geocoder = self.make_geocoder(view_box=view_box)
                 self.geocode_run(
-                    {"query": "Maple Street"},
+                    {"query": "Maple Street", "viewbox": viewbox},
                     {"latitude": 51.5223513, "longitude": -0.1382104}
                 )
                 self.assertEqual(1, len(w))
@@ -259,15 +239,13 @@ class BaseNominatimTestCase(with_metaclass(ABCMeta, object)):
         query = u('\u0441\u0442\u0440\u043e\u0438\u0442\u0435\u043b\u044c '
                   '\u0442\u043e\u043c\u0441\u043a')
 
-        self.geocoder = self.make_geocoder(view_box=bb)
         self.geocode_run(
-            {"query": query},
+            {"query": query, "viewbox": bb},
             {"latitude": 56.4129459, "longitude": 84.847831069814},
         )
 
-        self.geocoder = self.make_geocoder(view_box=bb, bounded=True)
         self.geocode_run(
-            {"query": query},
+            {"query": query, "viewbox": bb, "bounded": True},
             {"latitude": 56.4803224, "longitude": 85.0060457653324},
         )
 
@@ -289,6 +267,79 @@ class BaseNominatimTestCase(with_metaclass(ABCMeta, object)):
         # So let's simply consider just having the `wikidata` key
         # in response a success.
         self.assertTrue(location.raw['extratags']['wikidata'])
+
+    def test_country_codes_moscow(self):
+        self.geocode_run(
+            {"query": "moscow", "country_codes": "RU"},
+            {"latitude": 55.7507178, "longitude": 37.6176606,
+             "delta": 0.3},
+        )
+
+        location = self.geocode_run(
+            {"query": "moscow", "country_codes": "US"},
+            # There are two possible results:
+            # Moscow Idaho: 46.7323875,-117.0001651
+            # Moscow Penn: 41.3367497,-75.5185191
+            {},
+        )
+        # We don't care which Moscow is returned, unless it's
+        # the Russian one. We can sort this out by asserting
+        # the longitudes. The Russian Moscow has positive longitudes.
+        self.assertLess(-119, location.longitude)
+        self.assertLess(location.longitude, -70)
+
+    def test_country_codes_str(self):
+        self.geocode_run(
+            {"query": "kazan",
+             "country_codes": 'tr'},
+            {"latitude": 40.2317, "longitude": 32.6839},
+        )
+
+    def test_country_codes_list(self):
+        self.geocode_run(
+            {"query": "kazan",
+             "country_codes": ['cn', 'tr']},
+            {"latitude": 40.2317, "longitude": 32.6839},
+        )
+
+    def test_featuretype_param(self):
+        self.geocode_run(
+            {"query": "mexico",
+             "featuretype": 'country'},
+            {"latitude": 22.5000485, "longitude": -100.0000375},
+        )
+
+        self.geocode_run(
+            {"query": "mexico",
+             "featuretype": 'state'},
+            {"latitude": 19.4839446, "longitude": -99.6899716},
+        )
+
+        self.geocode_run(
+            {"query": "mexico",
+             "featuretype": 'city'},
+            {"latitude": 19.4326009, "longitude": -99.1333416},
+        )
+
+        self.geocode_run(
+            {"query": "georgia",
+             "featuretype": 'settlement'},
+            {"latitude": 32.3293809, "longitude": -83.1137366},
+        )
+
+    def test_namedetails(self):
+        query = "Kyoto, Japan"
+        result = self.geocode_run(
+            {"query": query, "namedetails": True},
+            {},
+        )
+        self.assertIn('namedetails', result.raw)
+
+        result = self.geocode_run(
+            {"query": query, "namedetails": False},
+            {},
+        )
+        self.assertNotIn('namedetails', result.raw)
 
 
 class NominatimTestCase(BaseNominatimTestCase, GeocoderTestBase):

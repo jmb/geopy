@@ -1,5 +1,5 @@
+import pytest
 from mock import patch
-import unittest
 
 from geopy import exc
 from geopy.geocoders import GeocodeFarm
@@ -7,9 +7,11 @@ from geopy.point import Point
 from test.geocoders.util import GeocoderTestBase, env
 
 
-@unittest.skipUnless(
-    not env.get('GEOCODEFARM_SKIP'),
-    "GEOCODEFARM_SKIP env variable is set"
+@pytest.mark.xfail(
+    env.get('GEOCODEFARM_SKIP'),
+    reason=(
+        "geocodefarm service is unstable at times"
+    )
 )
 class GeocodeFarmTestCase(GeocoderTestBase):
 

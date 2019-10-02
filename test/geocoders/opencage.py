@@ -1,5 +1,5 @@
-import warnings
 import unittest
+import warnings
 
 from geopy.compat import u
 from geopy.geocoders import OpenCage
@@ -71,3 +71,17 @@ class OpenCageTestCase(GeocoderTestBase):
                 {"latitude": 46.7323875, "longitude": -117.0001651},
             )
             self.assertEqual(1, len(w))
+
+    def test_country_str(self):
+        self.geocode_run(
+            {"query": "kazan",
+             "country": 'tr'},
+            {"latitude": 40.2317, "longitude": 32.6839},
+        )
+
+    def test_country_list(self):
+        self.geocode_run(
+            {"query": "kazan",
+             "country": ['cn', 'tr']},
+            {"latitude": 40.2317, "longitude": 32.6839},
+        )

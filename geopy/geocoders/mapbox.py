@@ -1,4 +1,4 @@
-from geopy.compat import urlencode, quote
+from geopy.compat import quote, string_compare, urlencode
 from geopy.geocoders.base import DEFAULT_SENTINEL, Geocoder
 from geopy.location import Location
 from geopy.point import Point
@@ -75,10 +75,9 @@ class MapBox(Geocoder):
 
         def parse_feature(feature):
             location = feature['place_name']
-            place = feature['text']
             longitude = feature['geometry']['coordinates'][0]
             latitude = feature['geometry']['coordinates'][1]
-            return Location(location, (latitude, longitude), place)
+            return Location(location, (latitude, longitude), feature)
         if exactly_one:
             return parse_feature(features[0])
         else:
@@ -96,10 +95,18 @@ class MapBox(Geocoder):
         """
         Return a location point by address
 
+        .. versionchanged:: 1.20.0
+            Previously due to a bug the resulting :class:`geopy.location.Location`'s
+            ``raw`` attribute contained a single string instead of a full
+            service response.
+
         :param str query: The address or query you wish to geocode.
 
         :param bool exactly_one: Return one result or a list of results, if
             available.
+
+            .. versionchanged:: 1.20.0
+                Previously due to a bug this parameter wasn't respected.
 
         :param int timeout: Time, in seconds, to wait for the geocoding service
             to respond before raising a :class:`geopy.exc.GeocoderTimedOut`
@@ -111,8 +118,15 @@ class MapBox(Geocoder):
         :type proximity: :class:`geopy.point.Point`, list or tuple of ``(latitude,
             longitude)``, or string as ``"%(latitude)s, %(longitude)s"``.
 
-        :param string country: Country to filter result in form of
-            ISO 3166-1 alpha-2 country code.
+        :param country: Country to filter result in form of
+            ISO 3166-1 alpha-2 country code (e.g. ``FR``).
+            Might be a Python list of strings.
+
+            .. versionchanged:: 1.19.0
+                Previously only a single string could be specified.
+                Now a Python list of individual countries is supported.
+
+        :type country: str or list
 
         :param bbox: The bounding box of the viewport within which
             to bias geocode results more prominently.
@@ -131,8 +145,12 @@ class MapBox(Geocoder):
             params['bbox'] = self._format_bounding_box(
                 bbox, "%(lon1)s,%(lat1)s,%(lon2)s,%(lat2)s")
 
+        if not country:
+            country = []
+        if isinstance(country, string_compare):
+            country = [country]
         if country:
-            params['country'] = country
+            params['country'] = ",".join(country)
 
         if proximity:
             p = Point(proximity)
@@ -144,7 +162,7 @@ class MapBox(Geocoder):
         logger.debug("%s.geocode: %s", self.__class__.__name__, url)
 
         return self._parse_json(
-            self._call_geocoder(url, timeout=timeout)
+            self._call_geocoder(url, timeout=timeout), exactly_one
         )
 
     def reverse(
@@ -155,6 +173,11 @@ class MapBox(Geocoder):
     ):
         """
         Return an address by location point.
+
+        .. versionchanged:: 1.20.0
+            Previously due to a bug the resulting :class:`geopy.location.Location`'s
+            ``raw`` attribute contained a single string instead of a full
+            service response.
 
         :param query: The coordinates for which you wish to obtain the
             closest human-readable addresses.

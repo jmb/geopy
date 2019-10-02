@@ -1,15 +1,21 @@
 import base64
+import unittest
 import warnings
 from datetime import datetime
+
 from pytz import timezone
 
 from geopy import exc
-from geopy.compat import u, urlparse, parse_qs
-from geopy.point import Point
+from geopy.compat import parse_qs, u, urlparse
 from geopy.geocoders import GoogleV3
+from geopy.point import Point
 from test.geocoders.util import GeocoderTestBase, env
 
 
+@unittest.skipUnless(
+    bool(env['GOOGLE_KEY']),
+    "No GOOGLE_KEY env variable set"
+)
 class GoogleV3TestCase(GeocoderTestBase):
     new_york_point = Point(40.75376406311989, -73.98489005863667)
     america_new_york = timezone("America/New_York")
@@ -18,9 +24,27 @@ class GoogleV3TestCase(GeocoderTestBase):
     def setUpClass(cls):
         cls.geocoder = GoogleV3(api_key=env.get('GOOGLE_KEY'))
 
-    def timezone_run(self, payload, expected):
-        tz = self._make_request(self.geocoder.timezone, **payload)
-        self.assertEqual(tz, expected)
+    def reverse_timezone_run(self, payload, expected):
+        timezone = self._make_request(self.geocoder.reverse_timezone, **payload)
+        if expected is None:
+            self.assertIsNone(timezone)
+        else:
+            self.assertEqual(timezone.pytz_timezone, expected)
+
+        # `timezone` method is deprecated, but we still support it.
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            if 'query' in payload:
+                payload['location'] = payload['query']
+                del payload['query']
+            pytz_timezone = self._make_request(self.geocoder.timezone, **payload)
+            if expected is None:
+                self.assertIsNone(pytz_timezone)
+            else:
+                self.assertEqual(pytz_timezone, expected)
+            self.assertLess(0, len(w))
+
+        return timezone
 
     def test_user_agent_custom(self):
         geocoder = GoogleV3(
@@ -37,6 +61,22 @@ class GoogleV3TestCase(GeocoderTestBase):
             GoogleV3(api_key='mock', client_id='a')
         with self.assertRaises(exc.ConfigurationError):
             GoogleV3(api_key='mock', secret_key='a')
+
+    def test_warning_with_no_api_key(self):
+        """
+        GoogleV3 warns if no API key is present
+        """
+        with warnings.catch_warnings(record=True) as w:
+            GoogleV3()
+        self.assertEqual(len(w), 1)
+
+    def test_no_warning_with_no_api_key_but_using_premier(self):
+        """
+        GoogleV3 does not warn about the API key if using premier
+        """
+        with warnings.catch_warnings(record=True) as w:
+            GoogleV3(client_id='client_id', secret_key='secret_key')
+        self.assertEqual(len(w), 0)
 
     def test_check_status(self):
         """
@@ -195,39 +235,55 @@ class GoogleV3TestCase(GeocoderTestBase):
             )
 
     def test_timezone_datetime(self):
-        """
-        GoogleV3.timezone returns pytz object from datetime
-        """
-        self.timezone_run(
-            {"location": self.new_york_point,
+        self.reverse_timezone_run(
+            {"query": self.new_york_point,
              "at_time": datetime.utcfromtimestamp(0)},
             self.america_new_york,
         )
 
-    def test_timezone_integer(self):
-        """
-        GoogleV3.timezone returns pytz object from epoch integer
-        """
-        self.timezone_run(
-            {"location": self.new_york_point, "at_time": 0},
-            self.america_new_york,
+    def test_timezone_at_time_normalization(self):
+        utc_naive_dt = datetime(2010, 1, 1, 0, 0, 0)
+        utc_timestamp = 1262304000
+        self.assertEqual(
+            utc_timestamp, self.geocoder._normalize_timezone_at_time(utc_naive_dt)
         )
 
+        self.assertLess(
+            utc_timestamp, self.geocoder._normalize_timezone_at_time(None)
+        )
+
+        tz = timezone("Etc/GMT-2")
+        local_aware_dt = tz.localize(datetime(2010, 1, 1, 2, 0, 0))
+        self.assertEqual(
+            utc_timestamp, self.geocoder._normalize_timezone_at_time(local_aware_dt)
+        )
+
+    def test_timezone_integer(self):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            self.reverse_timezone_run(
+                {"query": self.new_york_point, "at_time": 0},
+                self.america_new_york,
+            )
+            # at_time as number should issue a warning
+            self.assertLess(0, len(w))
+
     def test_timezone_no_date(self):
-        """
-        GoogleV3.timezone defaults `at_time`
-        """
-        self.timezone_run(
-            {"location": self.new_york_point},
+        self.reverse_timezone_run(
+            {"query": self.new_york_point},
             self.america_new_york,
         )
 
     def test_timezone_invalid_at_time(self):
-        """
-        GoogleV3.timezone invalid `at_time`
-        """
         with self.assertRaises(exc.GeocoderQueryError):
-            self.geocoder.timezone(self.new_york_point, "eek")
+            self.geocoder.reverse_timezone(self.new_york_point, "eek")
+
+    def test_reverse_timezone_unknown(self):
+        self.reverse_timezone_run(
+            # Google doesn't return a timezone for Antarctica.
+            {"query": "89.0, 1.0"},
+            None,
+        )
 
     def test_geocode_bounds(self):
         """
@@ -255,4 +311,51 @@ class GoogleV3TestCase(GeocoderTestBase):
             self.geocode_run(
                 {"query": "221b Baker St", "bounds": [50, -2, 55]},
                 {"latitude": 51.52, "longitude": -0.15},
+            )
+
+    def test_geocode_place_id_invalid(self):
+        self.geocode_run(
+            {"place_id": "ChIJOcfP0Iq2j4ARDrXUa7ZWs34"},
+            {"latitude": 37.22, "longitude": -122.05}
+        )
+
+    def test_geocode_place_id_not_invalid(self):
+        with self.assertRaises(exc.GeocoderQueryError):
+            self.geocode_run(
+                {"place_id": "xxxxx"},
+                {},
+                expect_failure=True,
+            )
+
+    def test_place_id_zero_result(self):
+        with self.assertRaises(exc.GeocoderQueryError):
+            self.geocode_run(
+                {"place_id": ""},
+                {},
+                expect_failure=True,
+            )
+
+    def test_geocode_place_id_with_query(self):
+        with self.assertRaises(ValueError):
+            self.geocode_run(
+                {"place_id": "ChIJOcfP0Iq2j4ARDrXUa7ZWs34",
+                 "query": "silicon valley"},
+                {}
+            )
+
+    def test_geocode_place_id_with_bounds(self):
+        with self.assertRaises(ValueError):
+            self.geocode_run(
+                {"place_id": "ChIJOcfP0Iq2j4ARDrXUa7ZWs34",
+                 "bounds": [50, -2, 55, 2]},
+                {}
+            )
+
+    def test_geocode_place_id_with_query_and_bounds(self):
+        with self.assertRaises(ValueError):
+            self.geocode_run(
+                {"place_id": "ChIJOcfP0Iq2j4ARDrXUa7ZWs34",
+                 "query": "silicon valley",
+                 "bounds": [50, -2, 55, 2]},
+                {}
             )

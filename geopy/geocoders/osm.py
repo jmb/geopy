@@ -1,8 +1,8 @@
 import warnings
 
-from geopy.compat import urlencode
+from geopy.compat import string_compare, urlencode
 from geopy.exc import GeocoderQueryError
-from geopy.geocoders.base import DEFAULT_SENTINEL, Geocoder, _DEFAULT_USER_AGENT
+from geopy.geocoders.base import _DEFAULT_USER_AGENT, DEFAULT_SENTINEL, Geocoder
 from geopy.location import Location
 from geopy.util import logger
 
@@ -50,7 +50,7 @@ class Nominatim(Geocoder):
             self,
             format_string=None,
             view_box=None,
-            bounded=False,
+            bounded=None,
             country_bias=None,
             timeout=DEFAULT_SENTINEL,
             proxies=DEFAULT_SENTINEL,
@@ -79,12 +79,26 @@ class Nominatim(Geocoder):
                 This format is now deprecated in favor of a list/tuple
                 of a pair of geopy Points and will be removed in geopy 2.0.
 
+            .. deprecated:: 1.19.0
+                This argument will be removed in geopy 2.0.
+                Use `geocode`'s `viewbox` instead.
+
         :param bool bounded: Restrict the results to only items contained
             within the bounding view_box.
 
             .. versionadded:: 1.15.0
 
-        :param str country_bias: Bias results to this country.
+            .. deprecated:: 1.19.0
+                This argument will be removed in geopy 2.0.
+                Use `geocode`'s `bounded` instead.
+
+        :type country_bias: str or list
+        :param country_bias: Limit search results to a specific country.
+            This param sets a default value for the `geocode`'s ``country_codes``.
+
+            .. deprecated:: 1.19.0
+                This argument will be removed in geopy 2.0.
+                Use `geocode`'s `country_codes` instead.
 
         :param int timeout:
             See :attr:`geopy.geocoders.options.default_timeout`.
@@ -122,9 +136,40 @@ class Nominatim(Geocoder):
             user_agent=user_agent,
             ssl_context=ssl_context,
         )
+
+        if country_bias is not None:
+            warnings.warn(
+                '`country_bias` argument of the %(cls)s.__init__ '
+                'is deprecated and will be removed in geopy 2.0. Use '
+                '%(cls)s.geocode(country_codes=%(value)r) instead.'
+                % dict(cls=type(self).__name__, value=country_bias),
+                DeprecationWarning,
+                stacklevel=2
+            )
         self.country_bias = country_bias
+
+        if view_box is not None:
+            warnings.warn(
+                '`view_box` argument of the %(cls)s.__init__ '
+                'is deprecated and will be removed in geopy 2.0. Use '
+                '%(cls)s.geocode(viewbox=%(value)r) instead.'
+                % dict(cls=type(self).__name__, value=view_box),
+                DeprecationWarning,
+                stacklevel=2
+            )
         self.view_box = view_box
+
+        if bounded is not None:
+            warnings.warn(
+                '`bounded` argument of the %(cls)s.__init__ '
+                'is deprecated and will be removed in geopy 2.0. Use '
+                '%(cls)s.geocode(bounded=%(value)r) instead.'
+                % dict(cls=type(self).__name__, value=bounded),
+                DeprecationWarning,
+                stacklevel=2
+            )
         self.bounded = bounded
+
         self.domain = domain.strip('/')
 
         if (self.domain == _DEFAULT_NOMINATIM_DOMAIN
@@ -140,7 +185,8 @@ class Nominatim(Geocoder):
                 '`geopy.geocoders.options.default_user_agent = "my-application"`. '
                 'In geopy 2.0 this will become an exception.'
                 % _DEFAULT_USER_AGENT,
-                UserWarning
+                DeprecationWarning,
+                stacklevel=2
             )
 
         self.api = "%s://%s%s" % (self.scheme, self.domain, self.geocode_path)
@@ -152,7 +198,7 @@ class Nominatim(Geocoder):
         The method can be overriden in Nominatim-based geocoders in order
         to extend URL parameters.
 
-        :param string base_api: Geocoding function base address - self.api
+        :param str base_api: Geocoding function base address - self.api
             or self.reverse_api.
 
         :param dict params: Geocoding params.
@@ -171,6 +217,11 @@ class Nominatim(Geocoder):
             language=False,
             geometry=None,
             extratags=False,
+            country_codes=None,
+            viewbox=None,
+            bounded=None,  # TODO: change default value to `False` in geopy 2.0
+            featuretype=None,
+            namedetails=False,
     ):
         """
         Return a location point by address.
@@ -225,6 +276,35 @@ class Nominatim(Geocoder):
 
             .. versionadded:: 1.17.0
 
+        :param country_codes: Limit search results
+            to a specific country (or a list of countries).
+            A country_code should be the ISO 3166-1alpha2 code,
+            e.g. ``gb`` for the United Kingdom, ``de`` for Germany, etc.
+
+            .. versionadded:: 1.19.0
+
+        :type country_codes: str or list
+
+        :type viewbox: list or tuple of 2 items of :class:`geopy.point.Point` or
+            ``(latitude, longitude)`` or ``"%(latitude)s, %(longitude)s"``.
+
+        :param viewbox: Coordinates to restrict search within.
+            Example: ``[Point(22, 180), Point(-22, -180)]``.
+
+            .. versionadded:: 1.19.0
+
+        :param bool bounded: Restrict the results to only items contained
+            within the bounding view_box. Defaults to `False`.
+
+            .. versionadded:: 1.19.0
+
+        :param str featuretype: If present, restrict results to certain type of features.
+            Allowed values: `country`, `state`, `city`, `settlement`.
+
+        :param bool namedetails: If you want in *Location.raw* to include
+            namedetails, set it to True. This will be a list of alternative names,
+            including language variants, etc.
+
         :rtype: ``None``, :class:`geopy.location.Location` or a list of them, if
             ``exactly_one=False``.
 
@@ -252,31 +332,43 @@ class Nominatim(Geocoder):
                 raise ValueError("Limit cannot be less than 1")
             params['limit'] = limit
 
-        # `viewbox` apparently replaces `view_box`
-        if self.view_box:
+        if viewbox is None:
             viewbox = self.view_box
+        if viewbox:
             if len(viewbox) == 4:
                 warnings.warn(
-                    '%s `view_box` format of '
+                    '%s `viewbox` format of '
                     '`[longitude, latitude, longitude, latitude]` is now '
-                    'deprecated and will be not supported in geopy 2.0. '
+                    'deprecated and will not be supported in geopy 2.0. '
                     'Use `[Point(latitude, longitude), Point(latitude, longitude)]` '
                     'instead.' % type(self).__name__,
-                    UserWarning
+                    DeprecationWarning,
+                    stacklevel=2
                 )
                 lon1, lat1, lon2, lat2 = viewbox
                 viewbox = [[lat1, lon1], [lat2, lon2]]
             params['viewbox'] = self._format_bounding_box(
                 viewbox, "%(lon1)s,%(lat1)s,%(lon2)s,%(lat2)s")
 
-        if self.bounded:
+        if bounded is None:
+            bounded = self.bounded
+        if bounded:
             params['bounded'] = 1
 
-        if self.country_bias:
-            params['countrycodes'] = self.country_bias
+        if country_codes is None:
+            country_codes = self.country_bias
+        if not country_codes:
+            country_codes = []
+        if isinstance(country_codes, string_compare):
+            country_codes = [country_codes]
+        if country_codes:
+            params['countrycodes'] = ",".join(country_codes)
 
         if addressdetails:
             params['addressdetails'] = 1
+
+        if namedetails:
+            params['namedetails'] = 1
 
         if language:
             params['accept-language'] = language
@@ -299,6 +391,9 @@ class Nominatim(Geocoder):
                     "Invalid geometry format. Must be one of: "
                     "wkt, svg, kml, geojson."
                 )
+
+        if featuretype:
+            params['featuretype'] = featuretype
 
         url = self._construct_url(self.api, params)
         logger.debug("%s.geocode: %s", self.__class__.__name__, url)
